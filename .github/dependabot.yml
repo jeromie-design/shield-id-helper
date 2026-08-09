@@ -1,0 +1,16 @@
+# Dependabot version updates. Go module and Actions freshness — this repo has no
+# npm or Docker surface. Security alerts/updates are enabled separately in repo
+# Settings > Code security (turned on 2026-08-08; there was no dependency
+# scanning here before that).
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
