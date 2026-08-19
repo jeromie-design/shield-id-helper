@@ -6,6 +6,10 @@ name: Claude PR Review
 # with `claude setup-token` and store it as the repo secret CLAUDE_CODE_OAUTH_TOKEN.
 # Until that secret is set the job fails visibly rather than reviewing silently
 # with no credential.
+#
+# Third-party actions are pinned to a commit SHA (not a mutable tag) so the code
+# that runs here cannot change under us — the version tag is in the trailing
+# comment. Bump both the SHA and the comment together when you update.
 
 on:
   pull_request:
@@ -18,6 +22,12 @@ permissions:
   pull-requests: write
   id-token: write
 
+# One live review per PR: a new push cancels the superseded run instead of
+# stacking another review (and another chunk of subscription usage) on top.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   review:
     # Skip draft PRs and Dependabot's dependency bumps — review real changes.
@@ -25,12 +35,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 1
 
       - name: Claude review
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@e2a4b761cd77a1138a5b41410eda9b28581f9bcd # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           track_progress: true
