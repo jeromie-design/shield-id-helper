@@ -4,12 +4,21 @@ name: Claude PR Review
 # using the repo's .cursor/BUGBOT.md as the review checklist. Authenticated with
 # a Claude subscription OAuth token (no per-token API billing) — generate it once
 # with `claude setup-token` and store it as the repo secret CLAUDE_CODE_OAUTH_TOKEN.
-# Until that secret is set the job fails visibly rather than reviewing silently
-# with no credential.
 #
-# Third-party actions are pinned to a commit SHA (not a mutable tag) so the code
-# that runs here cannot change under us — the version tag is in the trailing
-# comment. Bump both the SHA and the comment together when you update.
+# No credential, no review. The `preflight` job resolves whether the secret is
+# present and `review` only runs if it is; otherwise `review` is SKIPPED and
+# preflight emits a warning annotation and a job summary saying the PR was not
+# reviewed. This is deliberate: when the credential was missing the action used
+# to fail *inside* the review step, so the PR showed a red `review` check that
+# looked like a review finding. Every PR was red, nobody could tell a real
+# failure from a missing secret, and red checks became normal. A missing
+# credential must never be able to masquerade as a review result.
+#
+# Third-party actions are pinned to a commit SHA (not a mutable tag) so the
+# action's own code cannot change under us — the version tag is in the trailing
+# comment. Bump both the SHA and the comment together when you update. Note that
+# claude-code-action installs the Claude Code CLI at run time, so pinning the
+# action does not pin the CLI's behaviour.
 
 on:
   pull_request:
@@ -29,9 +38,52 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  review:
+  # The `secrets` context is not readable from a job-level `if`, so whether the
+  # credential exists has to be resolved in a step and handed on as an output.
+  preflight:
     # Skip draft PRs and Dependabot's dependency bumps — review real changes.
     if: github.event.pull_request.draft == false && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      has_credential: ${{ steps.credential.outputs.has_credential }}
+    steps:
+      - name: Check for a review credential
+        id: credential
+        env:
+          # Empty string when the secret is unset; also treated as absent when
+          # it holds nothing but whitespace, which an accidental paste produces.
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$(printf '%s' "${CLAUDE_CODE_OAUTH_TOKEN:-}" | tr -d '[:space:]')" ]; then
+            echo 'has_credential=true' >> "$GITHUB_OUTPUT"
+            echo 'Review credential present: running the Claude review.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo 'has_credential=false' >> "$GITHUB_OUTPUT"
+          echo "::warning title=Claude PR review did NOT run::Repo secret CLAUDE_CODE_OAUTH_TOKEN is unset or empty, so this PR was not reviewed. The skipped 'review' check is not a review result."
+          {
+            echo '## Claude PR review skipped: no credential'
+            echo
+            echo "The repo secret \`CLAUDE_CODE_OAUTH_TOKEN\` is unset or empty, so the"
+            echo '**review did not run and this PR has not been reviewed by Claude.**'
+            echo 'The `review` check is skipped rather than failed, so that a missing'
+            echo 'secret can never be mistaken for a review finding.'
+            echo
+            echo 'To switch the review on, generate a subscription token with'
+            echo '`claude setup-token` and store it on this repo:'
+            echo
+            echo '```'
+            echo "gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo ${GITHUB_REPOSITORY}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  review:
+    needs: preflight
+    if: needs.preflight.outputs.has_credential == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
